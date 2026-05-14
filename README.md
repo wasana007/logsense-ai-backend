@@ -22,7 +22,7 @@
 
 ### 🎬 Dashboard for loggovervåking - Klikk på bildet nedenfor for å se hele demoen på YouTube ▶️
 
-[![Watch Demo](docs/images/logsenseai-demo.png)](https://youtube.com/playlist?list=https://www.youtube.com/watch?v=MTGsfn9Y7eY&list=PLOwWtF7kBLb8EYRrO9Z94Oalhewrdnwmj)
+[![Watch Demo](docs/images/logsenseai.jpg)](https://www.youtube.com/watch?v=MTGsfn9Y7eY&list=PLOwWtF7kBLb8EYRrO9Z94Oalhewrdnwmj)
 
 Designprioriteter:
 
