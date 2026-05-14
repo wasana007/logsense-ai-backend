@@ -22,7 +22,7 @@
 
 ### 🎬 Dashboard for loggovervåking - Klikk på bildet nedenfor for å se hele demoen på YouTube ▶️
 
-[![Log Sense AI Demo](https://img.youtube.com/vi/MTGsfn9Y7eY/maxresdefault.jpg)](https://www.youtube.com/watch?v=MTGsfn9Y7eY)
+[![Watch Demo](docs/images/logsenseai-demo.png)](https://youtube.com/playlist?list=https://www.youtube.com/watch?v=MTGsfn9Y7eY&list=PLOwWtF7kBLb8EYRrO9Z94Oalhewrdnwmj)
 
 Designprioriteter:
 
@@ -30,7 +30,7 @@ Designprioriteter:
 - Ren lagdelt arkitektur med tydelig separasjon mellom API-, agent- og persistenslag
 - AI-agentsystem der Ollama LLM dynamisk velger analyseverktøy ved kjøretid
 - Sikkerhet gjennom Spring Security OAuth2 Login med egengenerert JWT
-- Interaktiv React-frontend med polling-basert statusoppdatering
+- Interaktiv React-frontend med sanntids statusoppdatering via WebSocket
 - Strukturert datalagring og observabilitet gjennom PostgreSQL
 
 ---
@@ -65,7 +65,7 @@ AI-agentlag
 LogStorageService  →  PostgreSQL (status: PENDING → COMPLETED / FAILED)
         │
         ▲
-        │  GET /api/v1/logs/{correlationId}  (polling fra React)
+        │  WebSocket /topic/logs  (push fra backend til React)
         │
 Klient (React)
 ```
@@ -110,6 +110,131 @@ vellykket innlogging. React kommuniserer utelukkende via JWT i `Authorization`-h
        │◀── user JSON ─────────│                         │
 ```
 
+## Håndtering av payroll-log-events (Kafka)
+
+Systemet støtter behandling av payroll-relaterte logghendelser via Kafka-topicet `payroll-log-events`. Disse hendelsene
+sendes fra payroll-systemet og behandles asynkront i LogSenseAI.
+
+Alle events følger et event-drevet flyt der hver melding identifiseres med en `correlationId` som brukes for sporing
+gjennom hele systemet.
+
+### Flyt for payroll-log-events 🔗 [Backend (Java Spring Boot + Kafka)](https://github.com/wasana007/payroll-backend)
+
+```
+Payroll Service
+      │
+      │  Publiserer LogEvent (JSON)
+      ▼
+Kafka topic: payroll-log-events
+      │
+      ▼
+PayrollLogConsumer (LogSenseAI)
+      │
+      ├── Deserialisering av LogEvent
+      ├── Lagrer PENDING i PostgreSQL
+      │
+      ├── Filtrerer bort INFO-logger
+      │
+      ├── Formaterer melding for AI-analyse
+      ├── Kaller AgentService (Ollama LLM)
+      │
+      ├── Lagrer resultat (COMPLETED)
+      └── eller feilhåndtering (FAILED)
+      │
+      ▼
+PostgreSQL + WebSocket → React Dashboard
+```
+
+---
+
+### Behandling i PayrollLogConsumer
+
+Hver melding behandles stegvis:
+
+| Steg | Beskrivelse                                       |
+|------|---------------------------------------------------|
+| 1    | Kafka konsumerer melding fra `payroll-log-events` |
+| 2    | LogEvent deserialiseres fra JSON                  |
+| 3    | INFO-logger filtreres bort fra AI-behandling      |
+| 4    | Meldingen formateres for analyse                  |
+| 5    | Lagres som `PENDING` i databasen                  |
+| 6    | Sendes til AI-agent (AgentService / Ollama)       |
+| 7    | Resultat lagres som `COMPLETED`                   |
+| 8    | Feil lagres som `FAILED`                          |
+| 9    | Resultat pushes til React via WebSocket           |
+
+---
+
+### Viktige designvalg
+
+* Kafka bruker `correlationId` som nøkkel for å sikre rekkefølge per loggstrøm
+* Systemet er **at-least-once delivery**, duplikater kan forekomme
+* Idempotens håndteres via `correlationId`
+* INFO-logger ekskluderes for å redusere belastning på AI-modellen
+* Kun relevante logger (WARN/ERROR/DEBUG) sendes til AI-analyse
+
+---
+
+### Eventstruktur
+
+```json
+{
+  "level": "ERROR",
+  "source": "payroll-service",
+  "employeeId": "12345",
+  "timestamp": "2026-05-13T10:15:30",
+  "message": "Feil i lønnsberegning på grunn av manglende verdi"
+}
+```
+
+---
+
+### Kafka topics
+
+| Topic                             | Beskrivelse                                  |
+|-----------------------------------|----------------------------------------------|
+| `payroll-log-events`              | Inngående logghendelser fra payroll-systemet |
+| `payroll-events`                  | Generelle payroll-domene events              |
+| `payroll-log-events` → LogSenseAI | AI-basert analysepipeline                    |
+
+---
+
+### Full behandlingsflyt
+
+```
+Kafka → Consumer → AI Agent → PostgreSQL → WebSocket → React Dashboard
+```
+
+---
+
+### Payload til frontend
+
+```json
+{
+  "correlationId": "uuid",
+  "status": "COMPLETED",
+  "level": "ERROR",
+  "employeeId": "12345",
+  "message": "Feil i lønnsberegning",
+  "result": "AI-analyse av årsak og forslag til løsning"
+}
+```
+
+---
+
+## Formål
+
+Denne integrasjonen gir:
+
+* Fullt løs koblet arkitektur mellom payroll og AI-systemet
+* Skalerbar behandling av logghendelser via Kafka
+* Mulighet for reanalyse av historiske events
+* Raskere feilsøking gjennom AI-drevet innsikt
+* Sanntids oppdatering i dashboard via WebSocket
+
+---
+
+
 **Nøkkelkomponenter:**
 
 | Komponent             | Ansvar                                                         |
@@ -149,8 +274,8 @@ POST /api/v1/logs
   → 202 Accepted
   → { "correlationId": "uuid", "status": "PENDING" }
 
-GET /api/v1/logs/{correlationId}
-  → { "status": "COMPLETED", "result": "..." }
+WebSocket /topic/logs
+  → { "correlationId": "uuid", "status": "COMPLETED", "result": "..." }
 ```
 
 ### AI-agentsystem med LLM-basert verktøyvalg
@@ -182,8 +307,8 @@ kreves i `AgentService` eller LLM-prompten.
 ### CorrelationId-basert sporing
 
 Hver loggforespørsel tildeles en unik `correlationId` (UUID) som følger meldingen gjennom hele systemet — fra
-REST-mottak via Kafka til lagring i PostgreSQL. React-klienten poller `GET /api/v1/logs/{correlationId}` inntil analysen
-er fullført.
+REST-mottak via Kafka til lagring i PostgreSQL. Resultatet mottas av React-klienten via WebSocket når analysen er
+fullført.
 
 **Statuslivssyklus:**
 
@@ -215,13 +340,13 @@ som muliggjør historisk søk og nedstrømsanalyse.
 11. LogController genererer correlationId og lagrer PENDING i PostgreSQL
 12. LogController publiserer (correlationId, log) til Kafka-topic
 13. LogController returnerer 202 Accepted med correlationId umiddelbart
-14. React starter polling mot GET /api/v1/logs/{correlationId}
+14. React viser PENDING og venter på WebSocket-melding
 15. LogConsumerService mottar melding fra Kafka asynkront
 16. AgentService spør Ollama LLM: hvilket verktøy skal brukes?
 17. LLM returnerer {"tool": "DB_ANALYZE"} (eller tilsvarende)
 18. ToolRouter ruter til riktig verktøy (DbTool / KafkaTool / OllamaTool)
 19. Resultat lagres i PostgreSQL med status COMPLETED
-20. React mottar COMPLETED ved neste polling og viser resultatet
+20. Backend pusher COMPLETED via WebSocket → React viser resultatet
 ```
 
 ---
@@ -253,27 +378,14 @@ ERROR: database connection timeout after 30s
 
 ---
 
-### Hent analyseresultat (polling)
+### Motta analyseresultat (WebSocket)
 
-```http
-GET /api/v1/logs/{correlationId}
-Authorization: Bearer <token>
+```
+WS  /ws
+SUB /topic/logs
 ```
 
-**Svar — PENDING:**
-
-```json
-{
-  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "PENDING",
-  "message": "ERROR: database connection timeout after 30s",
-  "result": "",
-  "createdAt": "2026-01-01T12:00:00",
-  "completedAt": ""
-}
-```
-
-**Svar — COMPLETED:**
+**Melding — COMPLETED:**
 
 ```json
 {
@@ -289,15 +401,11 @@ Authorization: Bearer <token>
 **Eksempel med curl:**
 
 ```bash
-# 1. Send logg
+# Send logg
 curl -X POST http://localhost:8080/api/v1/logs \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d 'ERROR: DB connection timeout after 30s'
-
-# 2. Poll resultat
-curl http://localhost:8080/api/v1/logs/550e8400-e29b-41d4-a716-446655440000 \
-  -H "Authorization: Bearer <token>"
 ```
 
 ---
@@ -314,18 +422,22 @@ backend/
 │   ├── JwtUtil.java               # Genererer og verifiserer JWT
 │   ├── KafkaConfig.java           # Kafka producer-konfigurasjon
 │   ├── SecurityConfig.java        # OAuth2 Login + JWT-filter + CORS
-│   └── SwaggerConfig.java         # OpenAPI / Swagger UI
+│   ├── SwaggerConfig.java         # OpenAPI / Swagger UI
+│   └── WebSocketConfig.java       # Konfigurerer WebSocket/STOMP for sanntidsoppdateringer
 ├── controller/
 │   ├── LogController.java         # POST (async) + GET /{correlationId}
 │   └── MeController.java          # GET /api/v1/me → brukerens e-post
 ├── model/
-│   └── LogEntry.java              # correlationId, status, message, result, timestamps
+│   ├── LogEntry.java              # correlationId, status, message, result, timestamps
+│   └── LogStatus.java             # Enum (PENDING, COMPLETED, FAILED)
 ├── repository/
-│   └── LogRepository.java         # findByCorrelationId()
+│   └── LogRepository.java         # JPA repository for LogEntry (findByCorrelationId)
 ├── service/
 │   ├── LogConsumerService.java    # Kafka-lytter → kaller AgentService
-│   ├── LogStorageService.java     # savePending / saveResult / saveFailed
-│   └── OllamaClient.java          # HTTP-klient mot Ollama API
+│   ├── LogNotificationService.java# WebSocket broadcasting av loggstatus til frontend
+│   ├── LogStorageService.java     # Håndterer persistens
+│   ├── OllamaClient.java          # HTTP-klient mot Ollama LLM API
+│   └── PayrollLogConsumer.java    # Konsumerer payroll-log-events og trigger AI pipeline
 └── tools/
     ├── DbTool.java                # Analyserer DB-relaterte logger
     ├── KafkaTool.java             # Analyserer Kafka-relaterte logger
@@ -333,8 +445,13 @@ backend/
 
 frontend/
 └── src/
-    ├── App.js                     # OAuth2 popup-flyt + polling-basert dashboard
-    └── main.js                    # Inngangspunkt
+    ├── App.jsx                    # OAuth2 popup-flyt + WebSocket-basert dashboard
+    ├── LoginSuccess.jsx           # Håndterer token fra OAuth2-redirect
+    ├── index.js                   # Inngangspunkt
+    ├── config.js                  # Alle konfigurasjonskonstanter
+    └── hooks/
+        ├── useLogApi.js           # POST logg + håndterer PENDING-status
+        └── usePayrollLog.js       # WebSocket-tilkobling + live event-tabell
 ```
 
 ---
@@ -392,10 +509,11 @@ React-appen tilgjengelig på `http://localhost:3000`
 - Fullt hendelsesdrevet design med Apache Kafka (async, non-blocking)
 - AI-agentarkitektur med LLM-basert verktøyvalg ved kjøretid
 - CorrelationId-basert sporing gjennom hele systemet
-- Statuslivssyklus (PENDING → COMPLETED / FAILED) med polling-mønster
+- Statuslivssyklus (PENDING → COMPLETED / FAILED) med WebSocket-push
 - Lokal LLM-integrasjon (Ollama) i en Spring Boot-backend
 - OAuth2 Login + egengenerert JWT for stateless API-autentisering
 - Popup-basert innloggingsflyt i React uten sideomlasting
+- Sanntids logg-dashboard via WebSocket (STOMP + SockJS)
 - Ren lagdelt arkitektur med tydelig separasjon av ansvar
 - Containerisert infrastruktur med Docker Compose
 - RESTful API med OpenAPI/Swagger-dokumentasjon
@@ -404,7 +522,6 @@ React-appen tilgjengelig på `http://localhost:3000`
 
 ## Veikart
 
-- [ ] WebSocket-støtte (erstatte polling med push-notifikasjoner)
 - [ ] Flerstegs AI-resonnering (chain-of-thought agent)
 - [ ] Minnelag for kontekstbevisst loggkorrelasjon
 - [ ] Observabilitetsdashbord (React UI med historikk)

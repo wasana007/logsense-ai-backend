@@ -8,6 +8,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer;
+import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
@@ -16,6 +19,7 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequ
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -29,9 +33,11 @@ import java.util.Map;
 public class SecurityConfig {
 
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
+
     private final JwtUtil jwtUtil;
     private final JwtAuthFilter jwtAuthFilter;
     private final ClientRegistrationRepository clientRegistrationRepository;
+
     @Value("${app.frontend-url}")
     private String frontendUrl;
 
@@ -46,10 +52,16 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filter(HttpSecurity http) throws Exception {
         http
+                .headers(headers -> headers
+                        .frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin)
+                        .addHeaderWriter(new StaticHeadersWriter(
+                                "Cross-Origin-Opener-Policy", "same-origin-allow-popups"
+                        ))
+                )
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .cors(cors -> {
                 })
-                .csrf(csrf -> csrf.disable())
+                .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(this::configureAuthorization)
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(this::handleUnauthorized))
                 .oauth2Login(oauth -> oauth
@@ -66,8 +78,7 @@ public class SecurityConfig {
     }
 
     private void configureAuthorization(
-            org.springframework.security.config.annotation.web.configurers.AuthorizeHttpRequestsConfigurer
-                    <?>.AuthorizationManagerRequestMatcherRegistry auth) {
+            AuthorizeHttpRequestsConfigurer<?>.AuthorizationManagerRequestMatcherRegistry auth) {
         auth
                 .requestMatchers(
                         "/oauth2/**",
@@ -76,7 +87,9 @@ public class SecurityConfig {
                         "/error",
                         "/swagger-ui/**",
                         "/v3/api-docs/**",
-                        "/swagger-ui.html"
+                        "/swagger-ui.html",
+                        "/ws/**",
+                        "/ws/info/**"
                 ).permitAll()
                 .requestMatchers("/api/v1/**").authenticated()
                 .anyRequest().authenticated();

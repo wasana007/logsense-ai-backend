@@ -1,6 +1,7 @@
 package com.logai.service;
 
 import com.logai.model.LogEntry;
+import com.logai.model.LogStatus;
 import com.logai.repository.LogRepository;
 import org.springframework.stereotype.Service;
 
@@ -9,40 +10,47 @@ import java.time.LocalDateTime;
 @Service
 public class LogStorageService {
 
-    private final LogRepository repo;
+    private final LogRepository repository;
 
-    public LogStorageService(LogRepository repo) {
-        this.repo = repo;
+    public LogStorageService(LogRepository repository) {
+        this.repository = repository;
     }
 
     public void savePending(String correlationId, String message) {
         LogEntry entry = new LogEntry();
         entry.setCorrelationId(correlationId);
         entry.setMessage(message);
-        entry.setStatus(LogEntry.Status.PENDING);
-        repo.save(entry);
+        entry.setStatus(LogStatus.PENDING);
+        entry.setCreatedAt(LocalDateTime.now());
+        repository.save(entry);
     }
 
-    public void saveResult(String correlationId, String result) {
-        repo.findByCorrelationId(correlationId).ifPresent(entry -> {
-            entry.setResult(result);
-            entry.setStatus(LogEntry.Status.COMPLETED);
-            entry.setCompletedAt(LocalDateTime.now());
-            repo.save(entry);
-        });
+    public boolean savePendingIfAbsent(String correlationId, String message) {
+        if (repository.existsByCorrelationId(correlationId)) {
+            return false;
+        }
+        savePending(correlationId, message);
+        return true;
     }
 
-    public void saveFailed(String correlationId, String errorMessage) {
-        repo.findByCorrelationId(correlationId).ifPresent(entry -> {
-            entry.setResult(errorMessage);
-            entry.setStatus(LogEntry.Status.FAILED);
-            entry.setCompletedAt(LocalDateTime.now());
-            repo.save(entry);
-        });
+    public LogEntry saveResult(String correlationId, String result) {
+        LogEntry entry = findByCorrelationId(correlationId);
+        entry.setStatus(LogStatus.COMPLETED);
+        entry.setResult(result);
+        entry.setCompletedAt(LocalDateTime.now());
+        return repository.save(entry);
+    }
+
+    public LogEntry saveFailed(String correlationId, String errorMessage) {
+        LogEntry entry = findByCorrelationId(correlationId);
+        entry.setResult(errorMessage);
+        entry.setStatus(LogStatus.FAILED);
+        entry.setCompletedAt(LocalDateTime.now());
+        return repository.save(entry);
     }
 
     public LogEntry findByCorrelationId(String correlationId) {
-        return repo.findByCorrelationId(correlationId)
+        return repository.findByCorrelationId(correlationId)
                 .orElseThrow(() -> new RuntimeException("Ikke funnet: " + correlationId));
     }
 }

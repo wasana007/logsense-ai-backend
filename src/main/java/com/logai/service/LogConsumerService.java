@@ -1,6 +1,7 @@
 package com.logai.service;
 
 import com.logai.agent.AgentService;
+import com.logai.model.LogEntry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,31 +15,36 @@ public class LogConsumerService {
 
     private final AgentService agentService;
     private final LogStorageService storageService;
+    private final LogNotificationService notificationService;
 
     public LogConsumerService(AgentService agentService,
-                              LogStorageService storageService) {
+                              LogStorageService storageService,
+                              LogNotificationService notificationService) {
         this.agentService = agentService;
         this.storageService = storageService;
+        this.notificationService = notificationService;
     }
 
     @KafkaListener(
             topics = "${kafka.topic.log}",
             groupId = "${kafka.consumer.group-id}"
     )
-    public void consume(ConsumerRecord<String, String> record) {
+    public void consume(ConsumerRecord<String, String> consumerRecord) {
 
-        String correlationId = record.key();
-        String logMessage = record.value();
+        String correlationId = consumerRecord.key();
+        String logMessage = consumerRecord.value();
 
         log.info("Mottatt | correlationId={}", correlationId);
 
         try {
             String result = agentService.handle(logMessage);
-            storageService.saveResult(correlationId, result);
+            LogEntry entry = storageService.saveResult(correlationId, result);
+            notificationService.notify(entry);
             log.info("Fullført | correlationId={}", correlationId);
 
         } catch (Exception e) {
-            storageService.saveFailed(correlationId, "FEIL: " + e.getMessage());
+            LogEntry entry = storageService.saveFailed(correlationId, "FEIL: " + e.getMessage());
+            notificationService.notify(entry);
             log.error("Mislyktes | correlationId={}", correlationId, e);
         }
     }

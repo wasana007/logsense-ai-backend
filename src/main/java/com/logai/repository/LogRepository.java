@@ -7,4 +7,6 @@ import java.util.Optional;
 
 public interface LogRepository extends JpaRepository<LogEntry, Long> {
     Optional<LogEntry> findByCorrelationId(String correlationId);
+
+    boolean existsByCorrelationId(String correlationId);
 }

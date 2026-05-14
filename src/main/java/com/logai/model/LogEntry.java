@@ -18,10 +18,17 @@ public class LogEntry {
     private String result;
 
     @Enumerated(EnumType.STRING)
-    private Status status = Status.PENDING;
+    private LogStatus status = LogStatus.PENDING;
 
     private LocalDateTime createdAt = LocalDateTime.now();
     private LocalDateTime completedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if (this.createdAt == null) {
+            this.createdAt = LocalDateTime.now();
+        }
+    }
 
     public Long getId() {
         return id;
@@ -55,11 +62,11 @@ public class LogEntry {
         this.result = result;
     }
 
-    public Status getStatus() {
+    public LogStatus getStatus() {
         return status;
     }
 
-    public void setStatus(Status status) {
+    public void setStatus(LogStatus status) {
         this.status = status;
     }
 
@@ -79,7 +86,4 @@ public class LogEntry {
         this.completedAt = completedAt;
     }
 
-    public enum Status {
-        PENDING, COMPLETED, FAILED
-    }
 }
